@@ -14,7 +14,7 @@ Have fun playing with the parameters!
 
 You can load and view your own models: `python3 ascii-3d-obj-renderer.py path/to/obj`
 
--It only supports vertex (v) and face (f) data from the OBJ file. Texture coordinates, normals, and other data are ignored.
--It assumes triangular or quadrilateral faces. More complex polygons may not render correctly.
--Very complex models with many faces may render slowly or cause performance issues due to the nature of ASCII rendering.
+- It only supports vertex (v) and face (f) data from the OBJ file. Texture coordinates, normals, and other data are ignored.
+- It assumes triangular or quadrilateral faces. More complex polygons may not render correctly.
+- Very complex models with many faces may render slowly or cause performance issues due to the nature of ASCII rendering.
 
