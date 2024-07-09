@@ -1,19 +1,26 @@
 import math
 import time
 import os
-
+from functools import lru_cache
 
 
 # Screen properties
-SCREEN_WIDTH = 120
-SCREEN_HEIGHT = 60
+SCREEN_WIDTH = 150
+SCREEN_HEIGHT = 75
 CAMERA_DISTANCE = 5
+
+# Precomputed screen constants
+HALF_SCREEN_WIDTH = SCREEN_WIDTH // 2
+HALF_SCREEN_HEIGHT = SCREEN_HEIGHT // 2
 
 # ASCII character aspect ratio (approximately 2:1 height to width)
 ASPECT_RATIO = 2.0
 
 # Rotation speed
 ROTATION_SPEED = 0.1
+
+# Precomputed projection factor
+PROJECTION_FACTOR = min(SCREEN_WIDTH, SCREEN_HEIGHT * ASPECT_RATIO) * CAMERA_DISTANCE / 4
 
 # ASCII character palette for depth (from darkest to lightest)
 # PALETTE = ' .:-=+*#%@'
@@ -25,6 +32,14 @@ DEPTH_STEEPNESS = 2.5
 
 def clear_screen():
     os.system('cls' if os.name == 'nt' else 'clear')
+
+@lru_cache(maxsize=None)
+def get_sin(angle):
+    return math.sin(angle)
+
+@lru_cache(maxsize=None)
+def get_cos(angle):
+    return math.cos(angle)
 
 def rotate_point(x, y, z, angle_x, angle_y, angle_z):
     # Rotate around X-axis
@@ -39,8 +54,8 @@ def rotate_point(x, y, z, angle_x, angle_y, angle_z):
     return x, y, z
 
 def project(x, y, z):
-    factor = min(SCREEN_WIDTH, SCREEN_HEIGHT * ASPECT_RATIO) * CAMERA_DISTANCE / (4 * (z + CAMERA_DISTANCE))
-    return int(x * factor + SCREEN_WIDTH / 2), int(y * factor / ASPECT_RATIO + SCREEN_HEIGHT / 2)
+    factor = PROJECTION_FACTOR / (z + CAMERA_DISTANCE)
+    return int(x * factor + HALF_SCREEN_WIDTH), int(y * factor / ASPECT_RATIO + HALF_SCREEN_HEIGHT)
 
 def calculate_normal(face_vertices):
     v1 = [face_vertices[1][i] - face_vertices[0][i] for i in range(3)]
@@ -58,23 +73,14 @@ def normalize(vector):
 def dot_product(v1, v2):
     return sum(a * b for a, b in zip(v1, v2))
 
+# Precompute depth mapping
+DEPTH_MAP = [PALETTE[min(int(math.pow(i / 256, DEPTH_STEEPNESS) * PALETTE_SIZE), PALETTE_SIZE)] for i in range(256)]
+
 def map_depth_to_char(z, normal, light_dir):
-    # Normalize z to [0, 1] range
-    normalized_z = 1 - (z - (CAMERA_DISTANCE - 1)) / 2  # Assuming model is scaled to fit in a 2x2x2 cube
-    normalized_z = max(0, min(1, normalized_z))
-    
-    # Calculate lighting intensity
+    normalized_z = max(0, min(255, int((1 - (z + CAMERA_DISTANCE) / (2 * CAMERA_DISTANCE)) * 255)))
     light_intensity = max(0, dot_product(normalize(normal), light_dir))
-    
-    # Combine depth and lighting
-    shading = (normalized_z + light_intensity) / 2
-    
-    # Apply depth steepness
-    shading = math.pow(shading, DEPTH_STEEPNESS)
-    
-    # Map to character index
-    char_index = int(shading * PALETTE_SIZE)
-    return PALETTE[min(char_index, PALETTE_SIZE)]
+    shading = (normalized_z + int(light_intensity * 255)) // 2
+    return DEPTH_MAP[shading]
 
 def interpolate_z(x, y, triangle, z_values):
     x1, y1 = triangle[0]
@@ -125,8 +131,11 @@ def load_obj(filename):
     
     return vertices, faces
 
+def calculate_face_depth(face_vertices):
+    return sum(vertex[2] for vertex in face_vertices) / len(face_vertices)
+
 def render_model(vertices, faces, angle_x, angle_y, angle_z):
-    zbuffer = [[float('inf')] * SCREEN_WIDTH for _ in range(SCREEN_HEIGHT)]
+    zbuffer = [[float('-inf')] * SCREEN_WIDTH for _ in range(SCREEN_HEIGHT)]
     screen = [[' ' for _ in range(SCREEN_WIDTH)] for _ in range(SCREEN_HEIGHT)]
 
     light_dir = normalize([1, -1, 1])  # Light direction
@@ -134,17 +143,14 @@ def render_model(vertices, faces, angle_x, angle_y, angle_z):
     rotated_vertices = [rotate_point(x, y, z, angle_x, angle_y, angle_z) for x, y, z in vertices]
     projected_vertices = [project(x, y, z) for x, y, z in rotated_vertices]
 
-    faces_rendered = 0
-    points_rendered = 0
-
+    # Render faces without sorting
     for face in faces:
         face_vertices = [rotated_vertices[i] for i in face]
         projected_face = [projected_vertices[i] for i in face]
 
         normal = calculate_normal(face_vertices)
         
-        # Back-face culling
-        if normal[2] <= 0:
+        if normal[2] <= 0:  # Back-face culling
             continue
 
         min_x = max(0, min(x for x, _ in projected_face))
@@ -162,14 +168,9 @@ def render_model(vertices, faces, angle_x, angle_y, angle_z):
                 else:
                     continue
 
-                if z < zbuffer[y][x]:
+                if z > zbuffer[y][x]:
                     zbuffer[y][x] = z
                     screen[y][x] = map_depth_to_char(z, normal, light_dir)
-                    points_rendered += 1
-
-        faces_rendered += 1
-
-    # print(f"Faces rendered: {faces_rendered}, Points rendered: {points_rendered}")
 
     return '\n'.join(''.join(row) for row in screen)
 
@@ -178,14 +179,18 @@ def main(obj_file):
     angle_x = angle_y = angle_z = 0
     try:
         while True:
+            start_time = time.time()
             model = render_model(vertices, faces, angle_x, angle_y, angle_z)
             clear_screen()
             print(model)
+            end_time = time.time()
             # print(f"Angles: x={angle_x:.2f}, y={angle_y:.2f}, z={angle_z:.2f}")
+            print(f"Render time: {(end_time - start_time):.3f} seconds")
             angle_x += ROTATION_SPEED
             angle_y += ROTATION_SPEED * 0.7
             angle_z += ROTATION_SPEED * 0.5
             time.sleep(0.01)
+            # input("Press Enter to continue...")  # Added to pause between frames
     except KeyboardInterrupt:
         print("Exiting...")
 
